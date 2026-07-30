@@ -12,6 +12,7 @@ from rich.rule import Rule
 from rich.syntax import Syntax
 
 from coding_harness.htp import build_frame, read_frame
+from coding_harness.tools import ToolRegistry
 
 console = Console()
 
@@ -84,18 +85,49 @@ def main() -> None:
 
     attached_context = ""
     attached_filename: str | None = None
+    active_tool_name: str | None = None
+    registry = ToolRegistry()
 
     console.print(
         "[bold yellow]Commands:[/bold yellow] "
         "[bold]/attach <file>[/bold] | "
         "[bold]/clear-context[/bold] | "
+        "[bold]/tools[/bold] | "
+        "[bold]/tool <name> [args][/bold] | "
         "[bold]/exit[/bold]\n"
     )
+
+    def send_and_render(
+        payload: str,
+        task_headers: dict[str, str],
+        tool_name: str | None = None,
+    ) -> bool:
+        client.send_request("GENERATE", "/v1/code/completion", task_headers, payload)
+        with console.status("[bold magenta]Awaiting server response...[/bold magenta]"):
+            status_line, resp_headers, body = client.receive_response()
+        if not status_line:
+            console.print("[red]Server terminated connection unexpectedly.[/red]")
+            return False
+        console.print(Rule(style="dim"))
+        resp_len = resp_headers.get("content-length", "0")
+        label = f" ({tool_name})" if tool_name else ""
+        console.print(f"[dim]HTP Status: {status_line} | Length: {resp_len} bytes{label}[/dim]")
+        if body.startswith("def ") or body.startswith("class ") or "import " in body:
+            syntax = Syntax(body, "python", theme="monokai", line_numbers=True)
+            title = f"Generated Code Output{label}"
+            console.print(Panel(syntax, title=title, border_style="green"))
+        else:
+            title = f"AI Response{label}"
+            console.print(Panel(body, title=title, border_style="blue"))
+        console.print(Rule(style="dim"))
+        print()
+        return True
 
     try:
         while True:
             context_name = attached_filename or "No Context"
-            prompt_label = f"[bold cyan]AI-Harness[/bold cyan] [{context_name}] >"
+            tool_tag = f"tool:{active_tool_name}" if active_tool_name else "No Tool"
+            prompt_label = f"[bold cyan]AI-Harness[/bold cyan] [{context_name}] [{tool_tag}] >"
             user_input = Prompt.ask(prompt_label).strip()
 
             if not user_input:
@@ -104,6 +136,34 @@ def main() -> None:
             if user_input == "/exit":
                 console.print("[dim]Exiting session...[/dim]")
                 break
+
+            if user_input == "/tools":
+                console.print(Rule(style="dim"))
+                console.print("[bold]Available Tools:[/bold]\n")
+                for tool in registry.list_tools():
+                    params = " ".join(f"[italic]{p.name}[/italic]" for p in tool.parameters)
+                    param_str = f" {params}" if params else ""
+                    console.print(f"  [bold cyan]/tool {tool.name}[/bold cyan]{param_str}")
+                    console.print(f"    {tool.description}")
+                console.print()
+                continue
+
+            if user_input.startswith("/tool "):
+                parts = user_input.split(maxsplit=2)
+                tool_name = parts[1] if len(parts) > 1 else ""
+                tool_args = parts[2] if len(parts) > 2 else ""
+                found = registry.get(tool_name)
+                if not found:
+                    msg = f"Unknown tool '{tool_name}'. Use /tools to list available tools."
+                    console.print(f"[red]{msg}[/red]")
+                    continue
+                active_tool_name = tool_name
+                msg = f"Tool '{tool_name}' activated. Type your prompt to use it."
+                console.print(f"[green]{msg}[/green]")
+                if tool_args:
+                    user_input = tool_args
+                else:
+                    continue
 
             if user_input.startswith("/attach "):
                 filepath = user_input.split(" ", 1)[1].strip()
@@ -123,7 +183,23 @@ def main() -> None:
                 console.print("[yellow]Cleared file context.[/yellow]")
                 continue
 
-            headers: dict[str, str] = {
+            if active_tool_name and not user_input.startswith("/"):
+                found = registry.get(active_tool_name)
+                if found:
+                    payload = found.format_prompt(user_input=user_input, context=attached_context)
+                    headers: dict[str, str] = {
+                        "Client-Agent": "TerminalHarness/1.0",
+                        "Task-Mode": f"Tool-{found.name}",
+                        "Has-Context": "True" if attached_context else "False",
+                        "Active-Tool": found.name,
+                    }
+                    if attached_filename:
+                        headers["Context-Filename"] = attached_filename
+                    if not send_and_render(payload, headers, tool_name=found.name):
+                        break
+                    continue
+
+            headers = {
                 "Client-Agent": "TerminalHarness/1.0",
                 "Task-Mode": "Code-Completion",
                 "Has-Context": "True" if attached_context else "False",
@@ -131,33 +207,15 @@ def main() -> None:
             if attached_filename:
                 headers["Context-Filename"] = attached_filename
 
-            full_payload = user_input
+            payload = user_input
             if attached_context:
-                full_payload = (
+                payload = (
                     f"--- CONTEXT ({attached_filename}) ---\n"
                     f"{attached_context}\n--- PROMPT ---\n{user_input}"
                 )
 
-            client.send_request("GENERATE", "/v1/code/completion", headers, full_payload)
-
-            with console.status("[bold magenta]Awaiting server response...[/bold magenta]"):
-                status_line, resp_headers, body = client.receive_response()
-
-            if not status_line:
-                console.print("[red]Server terminated connection unexpectedly.[/red]")
+            if not send_and_render(payload, headers):
                 break
-
-            console.print(Rule(style="dim"))
-            resp_len = resp_headers.get("content-length", "0")
-            console.print(f"[dim]HTP Status: {status_line} | Length: {resp_len} bytes[/dim]")
-
-            if body.startswith("def ") or body.startswith("class ") or "import " in body:
-                syntax = Syntax(body, "python", theme="monokai", line_numbers=True)
-                console.print(Panel(syntax, title="Generated Code Output", border_style="green"))
-            else:
-                console.print(Panel(body, title="AI Response", border_style="blue"))
-            console.print(Rule(style="dim"))
-            print()
 
     except KeyboardInterrupt:
         console.print("\n[dim]Interrupted by user.[/dim]")
