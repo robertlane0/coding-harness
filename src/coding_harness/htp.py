@@ -26,16 +26,24 @@ def read_exact(sock: socket.socket, n_bytes: int) -> bytes:
     return bytes(buf)
 
 
+_HEADER_DELIMITERS = (b"\r\n\r\n", b"\n\n")
+_BUFFER_SIZE = 8192
+
+
 def _read_header_bytes(sock: socket.socket) -> tuple[bytes, bytearray]:
-    header_bytes = bytearray()
-    while b"\r\n\r\n" not in header_bytes and b"\n\n" not in header_bytes:
-        chunk = sock.recv(1)
+    buf = bytearray()
+    while True:
+        for delim in _HEADER_DELIMITERS:
+            idx = buf.find(delim)
+            if idx != -1:
+                header_end = idx + len(delim)
+                header_part = bytes(buf[:idx])
+                leftover = bytearray(buf[header_end:])
+                return header_part, leftover
+        chunk = sock.recv(_BUFFER_SIZE)
         if not chunk:
-            return b"", bytearray()
-        header_bytes.extend(chunk)
-    delimiter = b"\r\n\r\n" if b"\r\n\r\n" in header_bytes else b"\n\n"
-    header_part, leftover = header_bytes.split(delimiter, 1)
-    return bytes(header_part), leftover
+            return b"" if buf else b"", bytearray(buf)  # return partial header if any
+        buf.extend(chunk)
 
 
 def _parse_headers(header_part: bytes) -> tuple[str, dict[str, str]]:

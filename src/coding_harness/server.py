@@ -63,63 +63,79 @@ def run_server(
         signal.signal(signal.SIGINT, handle_signal)
         signal.signal(signal.SIGTERM, handle_signal)
 
-    conn: socket.socket | None = None
     try:
-        conn, addr = server_sock.accept()
-        conn.settimeout(30)
-        logger.info("Client connected from %s:%s", addr[0], addr[1])
-        print(f"{_color(96, '[CONNECTED]', color)} Client connected from {addr[0]}:{addr[1]}\n")
-
         while not shutdown_requested:
-            frame = read_frame(conn)
-            if frame is None:
-                logger.info("Client closed connection")
-                print(f"{_color(91, '[DISCONNECTED]', color)} Client closed connection.")
-                break
+            logger.info("Waiting for connection on %s:%s", host, port)
+            conn: socket.socket
+            conn, addr = server_sock.accept()
+            conn.settimeout(30)
+            logger.info("Client connected from %s:%s", addr[0], addr[1])
+            print(f"{_color(96, '[CONNECTED]', color)} Client connected from {addr[0]}:{addr[1]}\n")
 
-            if shutdown_requested:
-                break
+            try:
+                while not shutdown_requested:
+                    frame = read_frame(conn)
+                    if frame is None:
+                        logger.info("Client closed connection")
+                        print(f"{_color(91, '[DISCONNECTED]', color)} Client closed connection.")
+                        break
 
-            print(_color(93, "=" * 60, color))
-            print(">>> INCOMING HTP REQUEST FROM HARNESS >>>")
-            print(_color(93, "=" * 60, color))
-            print(f"{_color(1, frame.status_line, color)}")
-            for k, v in frame.headers.items():
-                print(f"  {_color(36, k, color)}: {v}")
-            print(f"{_color(90, '--- Payload Body ---', color)}")
-            print(frame.body)
-            print(f"{_color(93, '=' * 60, color)}\n")
+                    if shutdown_requested:
+                        break
 
-            if len(frame.body) > MAX_CONTENT_LENGTH:
-                logger.warning("Oversized request body (%d bytes)", len(frame.body))
+                    print(_color(93, "=" * 60, color))
+                    print(">>> INCOMING HTP REQUEST FROM HARNESS >>>")
+                    print(_color(93, "=" * 60, color))
+                    print(f"{_color(1, frame.status_line, color)}")
+                    for k, v in frame.headers.items():
+                        print(f"  {_color(36, k, color)}: {v}")
+                    print(f"{_color(90, '--- Payload Body ---', color)}")
+                    print(frame.body)
+                    print(f"{_color(93, '=' * 60, color)}\n")
 
-            print(f"{_color(92, '[SERVER INPUT]', color)} Enter response content for harness.")
-            response_body = get_input("(Type line by line. Enter 'EOF' on a new line to send):\n")
+                    if len(frame.body) > MAX_CONTENT_LENGTH:
+                        logger.warning("Oversized request body (%d bytes)", len(frame.body))
 
-            response = build_frame(
-                "HTP/1.0 200 OK",
-                headers={"Content-Type": "text/plain"},
-                body=response_body,
-            )
-            conn.sendall(response)
-            logger.info("Sent response (%d bytes)", len(response))
-            print(f"\n{_color(94, '[SENT]', color)} Response frame transmitted to harness.\n")
+                    inp = _color(92, "[SERVER INPUT]", color)
+                    print(f"{inp} Enter response content for harness.")
+                    response_body = get_input(
+                        "(Type line by line. Enter 'EOF' on a new line to send):\n"
+                    )
 
-    except TimeoutError:
-        logger.warning("Connection timed out")
-        print(f"{_color(91, '[TIMEOUT]', color)} Connection timed out.")
+                    response = build_frame(
+                        "HTP/1.0 200 OK",
+                        headers={"Content-Type": "text/plain"},
+                        body=response_body,
+                    )
+                    conn.sendall(response)
+                    logger.info("Sent response (%d bytes)", len(response))
+                    sent_label = _color(94, "[SENT]", color)
+                    print(f"\n{sent_label} Response frame transmitted to harness.\n")
+
+            except TimeoutError:
+                logger.warning("Connection timed out")
+                print(f"{_color(91, '[TIMEOUT]', color)} Connection timed out.")
+            except OSError as e:
+                if shutdown_requested:
+                    logger.info("Socket closed during shutdown")
+                else:
+                    logger.exception("Socket error: %s", e)
+                    print(f"{_color(91, '[ERROR]', color)} {e}")
+            except Exception as e:
+                logger.exception("Connection error: %s", e)
+                print(f"{_color(91, '[ERROR]', color)} {e}")
+            finally:
+                conn.close()
+                logger.info("Client disconnected")
+                print(f"{_color(91, '[DISCONNECTED]', color)} Client disconnected.\n")
+
     except OSError as e:
         if shutdown_requested:
-            logger.info("Socket closed during shutdown")
+            logger.info("Server socket closed during shutdown")
         else:
-            logger.exception("Socket error: %s", e)
+            logger.exception("Server error: %s", e)
             print(f"{_color(91, '[ERROR]', color)} {e}")
-    except Exception as e:
-        logger.exception("Server error: %s", e)
-        print(f"{_color(91, '[ERROR]', color)} {e}")
     finally:
-        if conn is not None:
-            conn.close()
         server_sock.close()
         logger.info("Server shut down")
 

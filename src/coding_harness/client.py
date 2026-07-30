@@ -86,12 +86,15 @@ def main() -> None:
     attached_context = ""
     attached_filename: str | None = None
     active_tool_name: str | None = None
+    conversation_history: list[str] = []
     registry = ToolRegistry()
 
     console.print(
         "[bold yellow]Commands:[/bold yellow]\n"
         "  [bold]/attach <file>[/bold]     Attach a file as context\n"
         "  [bold]/clear-context[/bold]     Clear attached file context\n"
+        "  [bold]/history[/bold]           Show conversation history\n"
+        "  [bold]/clear-history[/bold]     Clear conversation history\n"
         "  [bold]/tools[/bold]             List available tools\n"
         "  [bold]/tool <name> [args][/bold] Activate a tool (optionally with key=value params)\n"
         "  [bold]/tool-info <name>[/bold]  Show detailed info about a tool\n"
@@ -110,6 +113,8 @@ def main() -> None:
         if not status_line:
             console.print("[red]Server terminated connection unexpectedly.[/red]")
             return False
+        conversation_history.append(f">>> {payload}")
+        conversation_history.append(f"<<< {body}")
         console.print(Rule(style="dim"))
         resp_len = resp_headers.get("content-length", "0")
         label = f" ({tool_name})" if tool_name else ""
@@ -138,6 +143,25 @@ def main() -> None:
             if user_input == "/exit":
                 console.print("[dim]Exiting session...[/dim]")
                 break
+
+            if user_input == "/history":
+                if not conversation_history:
+                    console.print("[dim]No conversation history yet.[/dim]")
+                else:
+                    console.print(Rule(style="dim"))
+                    console.print("[bold]Conversation History:[/bold]\n")
+                    for i, entry in enumerate(conversation_history, 1):
+                        label = "Prompt" if entry.startswith(">>>") else "Response"
+                        console.print(f"  [bold]{i}. {label}:[/bold]")
+                        content = entry[4:]  # strip >>> or <<< prefix
+                        console.print(f"     {content[:200]}{'...' if len(content) > 200 else ''}")
+                    console.print()
+                continue
+
+            if user_input == "/clear-history":
+                conversation_history.clear()
+                console.print("[yellow]Conversation history cleared.[/yellow]")
+                continue
 
             if user_input == "/tools":
                 console.print(Rule(style="dim"))
