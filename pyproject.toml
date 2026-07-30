@@ -7,10 +7,43 @@ authors = [
     { name = "robertlane0", email = "robertlane0@protonmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "rich>=13.0.0",
+]
 
 [project.scripts]
-coding-harness = "coding_harness:main"
+coding-harness = "coding_harness.__main__:main"
+coding-harness-server = "coding_harness.server:main"
+coding-harness-client = "coding_harness.client:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+lint.select = ["E", "F", "I", "N", "W", "UP"]
+lint.ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+ignore_missing_imports = true
+disallow_untyped_defs = true
+disallow_any_unimported = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
 
 [build-system]
 requires = ["uv_build>=0.12.0,<0.13.0"]

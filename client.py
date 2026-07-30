@@ -1,16 +1,18 @@
+import os
 import socket
 import sys
-import os
+
 from rich.console import Console
 from rich.panel import Panel
-from rich.syntax import Syntax
 from rich.prompt import Prompt
 from rich.rule import Rule
+from rich.syntax import Syntax
 
 console = Console()
 
 HOST = "127.0.0.1"
 PORT = 9999
+
 
 class HTPClient:
     def __init__(self, host, port):
@@ -46,10 +48,10 @@ class HTPClient:
 
         delimiter = b"\r\n\r\n" if b"\r\n\r\n" in header_bytes else b"\n\n"
         header_part, leftover = header_bytes.split(delimiter, 1)
-        
+
         lines = header_part.decode("utf-8", errors="replace").splitlines()
         status_line = lines[0] if lines else ""
-        
+
         headers = {}
         for line in lines[1:]:
             if ":" in line:
@@ -57,8 +59,6 @@ class HTPClient:
                 headers[k.strip().lower()] = v.strip()
 
         content_len = int(headers.get("content-length", 0))
-        needed = content_len - len(leftover)
-
         body_bytes = leftover
         while len(body_bytes) < content_len:
             chunk = self.sock.recv(content_len - len(body_bytes))
@@ -72,12 +72,15 @@ class HTPClient:
         if self.sock:
             self.sock.close()
 
+
 def main():
-    console.print(Panel.fit(
-        "[bold cyan]⚡ Custom AI Terminal Coding Harness[/bold cyan]\n"
-        "[dim]Protocol: HTP/1.0 (JSONless over TCP)[/dim]",
-        border_style="cyan"
-    ))
+    console.print(
+        Panel.fit(
+            "[bold cyan]⚡ Custom AI Terminal Coding Harness[/bold cyan]\n"
+            "[dim]Protocol: HTP/1.0 (JSONless over TCP)[/dim]",
+            border_style="cyan",
+        )
+    )
 
     client = HTPClient(HOST, PORT)
     try:
@@ -92,11 +95,17 @@ def main():
     attached_context = ""
     attached_filename = None
 
-    console.print("[bold yellow]Commands:[/bold yellow] [bold]/attach <file>[/bold] | [bold]/clear-context[/bold] | [bold]/exit[/bold]\n")
+    console.print(
+        "[bold yellow]Commands:[/bold yellow] "
+        "[bold]/attach <file>[/bold] | "
+        "[bold]/clear-context[/bold] | "
+        "[bold]/exit[/bold]\n"
+    )
 
     try:
         while True:
-            prompt_label = f"[bold cyan]AI-Harness[/bold cyan] [{attached_filename or 'No Context'}] >"
+            context_name = attached_filename or "No Context"
+            prompt_label = f"[bold cyan]AI-Harness[/bold cyan] [{context_name}] >"
             user_input = Prompt.ask(prompt_label).strip()
 
             if not user_input:
@@ -109,10 +118,11 @@ def main():
             if user_input.startswith("/attach "):
                 filepath = user_input.split(" ", 1)[1].strip()
                 if os.path.exists(filepath):
-                    with open(filepath, "r", encoding="utf-8") as f:
+                    with open(filepath, encoding="utf-8") as f:
                         attached_context = f.read()
                     attached_filename = os.path.basename(filepath)
-                    console.print(f"[green]✓ Attached file context ({len(attached_context)} chars)[/green]")
+                    ctx_len = len(attached_context)
+                    console.print(f"[green]✓ Attached file context ({ctx_len} chars)[/green]")
                 else:
                     console.print(f"[red]Error: File '{filepath}' not found.[/red]")
                 continue
@@ -134,7 +144,10 @@ def main():
 
             full_payload = user_input
             if attached_context:
-                full_payload = f"--- CONTEXT ({attached_filename}) ---\n{attached_context}\n--- PROMPT ---\n{user_input}"
+                full_payload = (
+                    f"--- CONTEXT ({attached_filename}) ---\n"
+                    f"{attached_context}\n--- PROMPT ---\n{user_input}"
+                )
 
             client.send_request("GENERATE", "/v1/code/completion", headers, full_payload)
 
@@ -146,7 +159,8 @@ def main():
                 break
 
             console.print(Rule(style="dim"))
-            console.print(f"[dim]HTP Status: {status_line} | Length: {resp_headers.get('content-length', '0')} bytes[/dim]")
+            resp_len = resp_headers.get("content-length", "0")
+            console.print(f"[dim]HTP Status: {status_line} | Length: {resp_len} bytes[/dim]")
 
             # Render response content
             if body.startswith("def ") or body.startswith("class ") or "import " in body:
@@ -161,6 +175,7 @@ def main():
         console.print("\n[dim]Interrupted by user.[/dim]")
     finally:
         client.close()
+
 
 if __name__ == "__main__":
     main()

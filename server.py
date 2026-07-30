@@ -1,8 +1,8 @@
 import socket
-import sys
 
 HOST = "127.0.0.1"
 PORT = 9999
+
 
 def read_exact(sock, n_bytes):
     """Read exactly n bytes from socket."""
@@ -13,6 +13,7 @@ def read_exact(sock, n_bytes):
             raise ConnectionError("Socket connection closed prematurely")
         buf.extend(chunk)
     return bytes(buf)
+
 
 def parse_htp_request(sock):
     """Parse HTP/1.0 frame: line-based headers + raw body based on Content-Length."""
@@ -25,7 +26,7 @@ def parse_htp_request(sock):
 
     delimiter = b"\r\n\r\n" if b"\r\n\r\n" in header_bytes else b"\n\n"
     header_part, leftover = header_bytes.split(delimiter, 1)
-    
+
     header_lines = header_part.decode("utf-8", errors="replace").splitlines()
     if not header_lines:
         return None, None, None
@@ -46,6 +47,7 @@ def parse_htp_request(sock):
 
     body = body_bytes.decode("utf-8", errors="replace")
     return request_line, headers, body
+
 
 def run_server():
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -80,7 +82,7 @@ def run_server():
             # 2. Get AI response from stdin
             print("\033[92m[SERVER INPUT]\033[0m Enter response content for harness.")
             print("(Type line by line. Enter 'EOF' on a new line to send):\n")
-            
+
             response_lines = []
             while True:
                 try:
@@ -90,7 +92,7 @@ def run_server():
                     response_lines.append(line)
                 except EOFError:
                     break
-            
+
             response_body = "\n".join(response_lines)
             body_bytes = response_body.encode("utf-8")
 
@@ -101,7 +103,7 @@ def run_server():
                 f"Content-Type: text/plain\r\n"
                 f"Content-Length: {len(body_bytes)}\r\n"
                 f"\r\n"
-            ).encode("utf-8") + body_bytes
+            ).encode() + body_bytes
 
             conn.sendall(htp_response)
             print("\n\033[94m[SENT]\033[0m Response frame transmitted to harness.\n")
@@ -111,6 +113,7 @@ def run_server():
     finally:
         conn.close()
         server_sock.close()
+
 
 if __name__ == "__main__":
     run_server()
