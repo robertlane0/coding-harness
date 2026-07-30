@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -17,11 +20,20 @@ class Tool:
     prompt_template: str
     parameters: list[ToolParameter] = field(default_factory=list)
 
-    def format_prompt(self, user_input: str = "", context: str = "") -> str:
+    def format_prompt(
+        self,
+        user_input: str = "",
+        context: str = "",
+        params: dict[str, str] | None = None,
+    ) -> str:
+        filled = self.prompt_template
+        if params:
+            for k, v in params.items():
+                filled = filled.replace(f"{{{k}}}", v)
         parts: list[str] = []
         if context:
             parts.append(context)
-        parts.append(self.prompt_template)
+        parts.append(filled)
         if user_input:
             parts.append(user_input)
         return "\n\n".join(parts)
@@ -70,7 +82,8 @@ BUILTIN_TOOLS: list[Tool] = [
         ],
         prompt_template=(
             "You are a testing expert. Write comprehensive unit tests "
-            "for the following code. Include edge cases and error conditions."
+            "for the following code using the {framework} framework. "
+            "Include edge cases and error conditions."
         ),
     ),
     Tool(
@@ -103,10 +116,56 @@ BUILTIN_TOOLS: list[Tool] = [
 ]
 
 
+def _load_tool_from_dict(data: dict[str, Any]) -> Tool:
+    params = [
+        ToolParameter(
+            name=p["name"],
+            description=p.get("description", ""),
+            required=p.get("required", False),
+        )
+        for p in data.get("parameters", [])
+    ]
+    return Tool(
+        name=data["name"],
+        description=data.get("description", ""),
+        prompt_template=data["prompt_template"],
+        parameters=params,
+    )
+
+
+def load_tools_from_config(path: str | Path) -> list[Tool]:
+    config_path = Path(path).expanduser()
+    if not config_path.exists():
+        return []
+    with config_path.open("rb") as f:
+        data = tomllib.load(f)
+    raw = data.get("tool", [])
+    tools_data = raw if isinstance(raw, list) else [raw]
+    return [
+        _load_tool_from_dict(t)
+        for t in tools_data
+        if isinstance(t, dict) and "name" in t and "prompt_template" in t
+    ]
+
+
+def load_user_tools() -> list[Tool]:
+    candidates = [
+        Path.cwd() / ".coding-harness.toml",
+        Path.home() / ".config" / "coding-harness" / "tools.toml",
+    ]
+    tools: list[Tool] = []
+    for path in candidates:
+        tools.extend(load_tools_from_config(path))
+    return tools
+
+
 class ToolRegistry:
     def __init__(self, tools: list[Tool] | None = None) -> None:
         self._tools: dict[str, Tool] = {}
-        for tool in tools or BUILTIN_TOOLS:
+        builtins = tools if tools is not None else BUILTIN_TOOLS
+        for tool in builtins:
+            self._tools[tool.name] = tool
+        for tool in load_user_tools():
             self._tools[tool.name] = tool
 
     def get(self, name: str) -> Tool | None:

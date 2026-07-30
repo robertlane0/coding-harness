@@ -89,12 +89,14 @@ def main() -> None:
     registry = ToolRegistry()
 
     console.print(
-        "[bold yellow]Commands:[/bold yellow] "
-        "[bold]/attach <file>[/bold] | "
-        "[bold]/clear-context[/bold] | "
-        "[bold]/tools[/bold] | "
-        "[bold]/tool <name> [args][/bold] | "
-        "[bold]/exit[/bold]\n"
+        "[bold yellow]Commands:[/bold yellow]\n"
+        "  [bold]/attach <file>[/bold]     Attach a file as context\n"
+        "  [bold]/clear-context[/bold]     Clear attached file context\n"
+        "  [bold]/tools[/bold]             List available tools\n"
+        "  [bold]/tool <name> [args][/bold] Activate a tool (optionally with key=value params)\n"
+        "  [bold]/tool-info <name>[/bold]  Show detailed info about a tool\n"
+        "  [bold]/deactivate[/bold]        Deactivate the current tool\n"
+        "  [bold]/exit[/bold]              Exit the session\n"
     )
 
     def send_and_render(
@@ -142,10 +144,39 @@ def main() -> None:
                 console.print("[bold]Available Tools:[/bold]\n")
                 for tool in registry.list_tools():
                     params = " ".join(f"[italic]{p.name}[/italic]" for p in tool.parameters)
-                    param_str = f" {params}" if params else ""
+                    param_str = f" [{params}]" if params else ""
                     console.print(f"  [bold cyan]/tool {tool.name}[/bold cyan]{param_str}")
                     console.print(f"    {tool.description}")
                 console.print()
+                continue
+
+            if user_input == "/deactivate":
+                if active_tool_name:
+                    console.print(f"[yellow]Deactivated tool '{active_tool_name}'.[/yellow]")
+                    active_tool_name = None
+                else:
+                    console.print("[dim]No active tool to deactivate.[/dim]")
+                continue
+
+            if user_input.startswith("/tool-info "):
+                tool_name = user_input.split(maxsplit=1)[1].strip()
+                found = registry.get(tool_name)
+                if not found:
+                    msg = f"Unknown tool '{tool_name}'."
+                    console.print(f"[red]{msg}[/red]")
+                else:
+                    console.print(Rule(style="dim"))
+                    console.print(f"[bold cyan]Tool:[/bold cyan] {found.name}")
+                    console.print(f"[bold]Description:[/bold] {found.description}")
+                    console.print(f"[bold]Prompt Template:[/bold]\n{found.prompt_template}\n")
+                    if found.parameters:
+                        console.print("[bold]Parameters:[/bold]")
+                        for p in found.parameters:
+                            req = " (required)" if p.required else ""
+                            console.print(f"  [italic]{p.name}[/italic]{req}: {p.description}")
+                    else:
+                        console.print("[dim]No parameters.[/dim]")
+                    console.print()
                 continue
 
             if user_input.startswith("/tool "):
@@ -186,7 +217,28 @@ def main() -> None:
             if active_tool_name and not user_input.startswith("/"):
                 found = registry.get(active_tool_name)
                 if found:
-                    payload = found.format_prompt(user_input=user_input, context=attached_context)
+                    tool_params: dict[str, str] = {}
+                    rest = user_input
+                    words = user_input.split()
+                    for w in words:
+                        if "=" in w:
+                            k, v = w.split("=", 1)
+                            tool_params[k.strip()] = v.strip()
+                    if tool_params:
+                        param_keys = {p.name for p in found.parameters}
+                        filtered = {k: v for k, v in tool_params.items() if k in param_keys}
+                        rest = " ".join(
+                            w
+                            for w in words
+                            if "=" not in w or w.split("=", 1)[0].strip() not in param_keys
+                        )
+                    else:
+                        filtered = {}
+                    payload = found.format_prompt(
+                        user_input=rest,
+                        context=attached_context,
+                        params=filtered or None,
+                    )
                     headers: dict[str, str] = {
                         "Client-Agent": "TerminalHarness/1.0",
                         "Task-Mode": f"Tool-{found.name}",
