@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import logging
 import socket
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
+
+MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10 MB
 
 
 @dataclass
@@ -47,7 +52,15 @@ def _parse_headers(header_part: bytes) -> tuple[str, dict[str, str]]:
 
 
 def _read_body(sock: socket.socket, headers: dict[str, str], leftover: bytearray) -> str:
-    content_len = int(headers.get("content-length", 0))
+    raw = headers.get("content-length", "0")
+    try:
+        content_len = int(raw)
+    except ValueError:
+        logger.warning("Invalid Content-Length: %r", raw)
+        content_len = 0
+    if content_len < 0 or content_len > MAX_CONTENT_LENGTH:
+        logger.warning("Refusing Content-Length %d (max %d)", content_len, MAX_CONTENT_LENGTH)
+        raise ValueError(f"Content-Length {content_len} out of range")
     buf = bytearray(leftover)
     while len(buf) < content_len:
         chunk = sock.recv(content_len - len(buf))
