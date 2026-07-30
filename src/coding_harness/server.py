@@ -6,6 +6,7 @@ import os
 import signal
 import socket
 import sys
+import threading
 
 from coding_harness.htp import build_frame, read_frame
 
@@ -58,8 +59,9 @@ def run_server(
         logger.info("Received signal %d, shutting down...", signum)
         shutdown_requested = True
 
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGINT, handle_signal)
+        signal.signal(signal.SIGTERM, handle_signal)
 
     conn: socket.socket | None = None
     try:
