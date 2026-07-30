@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import json
 import logging
 import socket
 from dataclasses import dataclass, field
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10 MB
+
+RESPONSE_TYPE_FINAL = "final"
+RESPONSE_TYPE_TOOL_CALL = "tool_call"
+RESPONSE_TYPE_TOOL_RESULT = "tool_result"
 
 
 @dataclass
@@ -108,3 +114,63 @@ def build_frame(
     header_lines.append("")
 
     return "\r\n".join(header_lines).encode() + body_bytes
+
+
+def get_response_type(headers: dict[str, str]) -> str:
+    return headers.get("x-response-type", RESPONSE_TYPE_FINAL)
+
+
+def is_tool_call(headers: dict[str, str]) -> bool:
+    return get_response_type(headers) == RESPONSE_TYPE_TOOL_CALL
+
+
+def parse_tool_call(headers: dict[str, str], body: str) -> dict[str, Any]:
+    name = headers.get("x-tool-name", "")
+    args: dict[str, str] = {}
+    if body.strip():
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict):
+                args = {k: str(v) for k, v in parsed.items()}
+        except json.JSONDecodeError:
+            for line in body.strip().splitlines():
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    args[k.strip()] = v.strip()
+    return {"name": name, "arguments": args, "id": headers.get("x-tool-call-id", "")}
+
+
+def build_tool_call_frame(
+    tool_name: str,
+    arguments: dict[str, str],
+    *,
+    call_id: str = "",
+) -> bytes:
+    body = json.dumps(arguments)
+    headers = {
+        "X-Response-Type": RESPONSE_TYPE_TOOL_CALL,
+        "X-Tool-Name": tool_name,
+        "Content-Type": "application/json",
+    }
+    if call_id:
+        headers["X-Tool-Call-Id"] = call_id
+    return build_frame("HTP/1.0 200 OK", headers=headers, body=body)
+
+
+def build_tool_result_frame(
+    tool_name: str,
+    output: str,
+    *,
+    error: str | None = None,
+    call_id: str = "",
+) -> bytes:
+    body = output
+    headers: dict[str, str] = {
+        "X-Response-Type": RESPONSE_TYPE_TOOL_RESULT,
+        "X-Tool-Name": tool_name,
+    }
+    if error:
+        headers["X-Tool-Error"] = error
+    if call_id:
+        headers["X-Tool-Call-Id"] = call_id
+    return build_frame("HTP/1.0 200 OK", headers=headers, body=body)

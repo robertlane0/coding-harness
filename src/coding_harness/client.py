@@ -11,7 +11,19 @@ from rich.prompt import Prompt
 from rich.rule import Rule
 from rich.syntax import Syntax
 
-from coding_harness.htp import build_frame, read_frame
+from coding_harness.htp import (
+    RESPONSE_TYPE_TOOL_RESULT,
+    build_frame,
+    get_response_type,
+    is_tool_call,
+    parse_tool_call,
+    read_frame,
+)
+from coding_harness.llm_tools import (
+    ToolCall,
+    execute_tool_call,
+    get_tool_specs,
+)
 from coding_harness.tools import ToolRegistry
 
 console = Console()
@@ -102,33 +114,66 @@ def main() -> None:
         "  [bold]/exit[/bold]              Exit the session\n"
     )
 
-    def send_and_render(
+    def send_with_tool_loop(
         payload: str,
         task_headers: dict[str, str],
         tool_name: str | None = None,
     ) -> bool:
-        client.send_request("GENERATE", "/v1/code/completion", task_headers, payload)
-        with console.status("[bold magenta]Awaiting server response...[/bold magenta]"):
-            status_line, resp_headers, body = client.receive_response()
-        if not status_line:
-            console.print("[red]Server terminated connection unexpectedly.[/red]")
-            return False
-        conversation_history.append(f">>> {payload}")
-        conversation_history.append(f"<<< {body}")
-        console.print(Rule(style="dim"))
-        resp_len = resp_headers.get("content-length", "0")
-        label = f" ({tool_name})" if tool_name else ""
-        console.print(f"[dim]HTP Status: {status_line} | Length: {resp_len} bytes{label}[/dim]")
-        if body.startswith("def ") or body.startswith("class ") or "import " in body:
-            syntax = Syntax(body, "python", theme="monokai", line_numbers=True)
-            title = f"Generated Code Output{label}"
-            console.print(Panel(syntax, title=title, border_style="green"))
-        else:
-            title = f"AI Response{label}"
-            console.print(Panel(body, title=title, border_style="blue"))
-        console.print(Rule(style="dim"))
-        print()
-        return True
+        task_headers = dict(task_headers)
+        task_headers["X-LLM-Tools"] = ",".join(t["name"] for t in get_tool_specs())
+        current_payload = payload
+        max_turns = 10
+
+        for turn in range(max_turns):
+            client.send_request("GENERATE", "/v1/code/completion", task_headers, current_payload)
+            with console.status("[bold magenta]Awaiting server response...[/bold magenta]"):
+                status_line, resp_headers, body = client.receive_response()
+            if not status_line:
+                console.print("[red]Server terminated connection unexpectedly.[/red]")
+                return False
+
+            conversation_history.append(f">>> {current_payload}")
+            conversation_history.append(f"<<< ({get_response_type(resp_headers)}) {body[:100]}")
+
+            if is_tool_call(resp_headers):
+                call_info = parse_tool_call(resp_headers, body)
+                call = ToolCall(
+                    name=call_info["name"],
+                    arguments=call_info["arguments"],
+                    id=call_info["id"],
+                )
+                tag = f"[TOOL:{call.name}]"
+                console.print(f"\n[bold green]{tag}[/bold green] Executing {call.name}...")
+                console.print(f"  Args: {call.arguments}")
+                result = execute_tool_call(call)
+                if result.error:
+                    console.print(f"  [red]Error: {result.error}[/red]")
+                else:
+                    preview = result.output[:200]
+                    console.print(f"  Output: {preview}{'...' if len(result.output) > 200 else ''}")
+                task_headers["X-Response-Type"] = RESPONSE_TYPE_TOOL_RESULT
+                current_payload = result.output
+                if result.error:
+                    current_payload = f"Error: {result.error}"
+                continue
+
+            console.print(Rule(style="dim"))
+            resp_len = resp_headers.get("content-length", "0")
+            label = f" ({tool_name})" if tool_name else ""
+            console.print(f"[dim]HTP Status: {status_line} | Length: {resp_len} bytes{label}[/dim]")
+            if body.startswith("def ") or body.startswith("class ") or "import " in body:
+                syntax = Syntax(body, "python", theme="monokai", line_numbers=True)
+                title = f"Generated Code Output{label}"
+                console.print(Panel(syntax, title=title, border_style="green"))
+            else:
+                title = f"AI Response{label}"
+                console.print(Panel(body, title=title, border_style="blue"))
+            console.print(Rule(style="dim"))
+            print()
+            return True
+
+        console.print("[red]Tool call loop exceeded max iterations.[/red]")
+        return False
 
     try:
         while True:
@@ -271,7 +316,7 @@ def main() -> None:
                     }
                     if attached_filename:
                         headers["Context-Filename"] = attached_filename
-                    if not send_and_render(payload, headers, tool_name=found.name):
+                    if not send_with_tool_loop(payload, headers, tool_name=found.name):
                         break
                     continue
 
@@ -290,7 +335,7 @@ def main() -> None:
                     f"{attached_context}\n--- PROMPT ---\n{user_input}"
                 )
 
-            if not send_and_render(payload, headers):
+            if not send_with_tool_loop(payload, headers):
                 break
 
     except KeyboardInterrupt:
