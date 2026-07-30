@@ -55,6 +55,7 @@ class HTPClient:
     def close(self) -> None:
         if self.sock:
             self.sock.close()
+            self.sock = None
 
 
 def main() -> None:
