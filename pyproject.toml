@@ -1,7 +1,7 @@
 [project]
 name = "coding-harness"
 version = "0.1.0"
-description = "Add your description here"
+description = "Custom AI coding harness with HTP/1.0 protocol, terminal client, and interactive test server"
 readme = "README.md"
 authors = [
     { name = "robertlane0", email = "robertlane0@protonmail.com" }
